@@ -1,0 +1,356 @@
+#!/usr/bin/perl
+
+#########################
+# This program takes output from sysstat logs
+# normally viewed using sar and pushes it into
+# TSDB so it can be viewed.
+# #####################3
+# TODO
+# Make input a bit more intelligent
+# ######################
+use strict;
+use warnings;
+use Date::Parse;
+use POSIX qw(mkfifo);
+
+my $counter=0;
+my $FIFO = '/tmp/tsdb_sar_pipe';
+my %active_epoch;
+my $directory = $ARGV[0] || '/data1/sa/';
+
+unless (-p $FIFO) {
+  unlink $FIFO; 
+  mkfifo($FIFO, 0700) || die "can't mkfifo $FIFO: $!";
+  }
+
+system("tsdb import $FIFO &");
+sleep 2;
+open(OUTFILE, ">", $FIFO);
+#open(OUTFILE, ">", "/data1/tsdbdatapoints");
+
+my @file_list = `find /data1/sa/ -type f`;
+
+foreach my $file ( @file_list ) {
+
+  chomp $file;
+  my ($hostname,$year,$month,$day) = $file =~ /\/data1\/sa\/(.+?)\/(\d+)\/(\d+)\/sa(\d+)/;
+  #print "FILE INFO $hostname $year $month $day\n";
+
+  my $epoch_date;
+  $counter++;
+  my $AMPM_previous;
+  my $next_day_flag;
+  my $cmd;
+
+  close(OUTFILE);
+  sleep 5;
+  system("tsdb import $FIFO &");
+  open(OUTFILE, ">", $FIFO);
+  #open(OUTFILE, ">", "/data1/tsdbdatapoints");
+
+  $AMPM_previous = 'unset';
+  $next_day_flag = 0;
+  $cmd = "sar --legacy -f $file -n DEV | grep -v Average | grep -v x86 | grep -v IFACE";
+  #print $cmd;
+  my @sar_DEV_output = `$cmd`;
+  foreach my $line ( @sar_DEV_output ) {
+    chomp $line;
+
+    grep(s/ (AM|PM)/$1/g,$line);
+    grep(s/\s+/\|/g,$line);
+
+    my ($time, $interface, $rxpck_s, $txpck_s, $rxkb_s,
+       $txkb_s, $rxcmp_s, $txcmp_s, $rxmcst_s, 
+       ) = split('\|',$line);
+
+    next unless ($time && $interface && $rxmcst_s);
+
+    my ($AMPM_current) = $time =~ /(AM|PM)/;
+    if ( $AMPM_current eq 'AM' && $AMPM_previous eq 'PM' ) {
+      $next_day_flag = 1;
+      }
+    $AMPM_previous = $AMPM_current;
+
+    $epoch_date = str2time("${year}-${month}-${day} $time");
+    if ($next_day_flag == 1) { $epoch_date = $epoch_date + 86400; }
+
+    print OUTFILE "sar_rxpck_s $epoch_date $rxpck_s host=$hostname interface=$interface\n";
+    print OUTFILE "sar_txpck_s $epoch_date $txpck_s host=$hostname interface=$interface\n";
+    print OUTFILE "sar_rxkb_s $epoch_date $rxkb_s host=$hostname interface=$interface\n";
+    print OUTFILE "sar_txkb_s $epoch_date $txkb_s host=$hostname interface=$interface\n";
+    print OUTFILE "sar_rxcmp_s $epoch_date $rxcmp_s host=$hostname interface=$interface\n";
+    print OUTFILE "sar_txcmp_s $epoch_date $txcmp_s host=$hostname interface=$interface\n";
+    print OUTFILE "sar_rxmcst_s $epoch_date $rxmcst_s host=$hostname interface=$interface\n";
+    }
+
+  $AMPM_previous = 'unset';
+  $next_day_flag = 0;
+  $cmd = "sar --legacy -f $file -n EDEV | grep -v Average | grep -v x86 | grep -v IFACE";
+  #print $cmd;
+  my @sar_EDEV_output = `$cmd`;
+  foreach my $line ( @sar_EDEV_output ) {
+    chomp $line;
+  
+    grep(s/ (AM|PM)/$1/g,$line);
+    grep(s/\s+/\|/g,$line);
+
+    my ($time, $interface, $rxerr_s, $txerr_s, $coll_s, 
+       $rxdrop_s, $txdrop_s, $txcarr_s, $rxfram_s, $rxfifo_s,
+       $txfifo_s) = split('\|',$line);
+
+    next unless ($time && $interface && $txfifo_s);
+
+    my ($AMPM_current) = $time =~ /(AM|PM)/;
+    if ( $AMPM_current eq 'AM' && $AMPM_previous eq 'PM' ) {
+      $next_day_flag = 1;
+      }
+    $AMPM_previous = $AMPM_current;
+   
+    $epoch_date = str2time("${year}-${month}-${day} $time");
+    if ($next_day_flag == 1) { $epoch_date = $epoch_date + 86400; }
+
+    print OUTFILE "sar_rxerr_s $epoch_date $rxerr_s host=$hostname interface=$interface\n";
+    print OUTFILE "sar_txerr_s $epoch_date $txerr_s host=$hostname interface=$interface\n";
+    print OUTFILE "sar_coll_s $epoch_date $coll_s host=$hostname interface=$interface\n";
+    print OUTFILE "sar_rxdrop_s $epoch_date $rxdrop_s host=$hostname interface=$interface\n";
+    print OUTFILE "sar_txdrop_s $epoch_date $txdrop_s host=$hostname interface=$interface\n";
+    print OUTFILE "sar_txcarr_s $epoch_date $txcarr_s host=$hostname interface=$interface\n";
+    print OUTFILE "sar_rxfram_s $epoch_date $rxfram_s host=$hostname interface=$interface\n";
+    print OUTFILE "sar_rxfifo_s $epoch_date $rxfifo_s host=$hostname interface=$interface\n";
+    print OUTFILE "sar_txfifo_s $epoch_date $txfifo_s host=$hostname interface=$interface\n";
+    }
+
+  $AMPM_previous = 'unset';
+  $next_day_flag = 0;
+  $cmd = "sar --legacy -f $file -P ALL | grep -v Average | grep -v all | grep -v x86 | grep -v CPU";
+  #print $cmd;
+  my @sar_PROC_UTIL_output = `$cmd`;
+  foreach my $line ( @sar_PROC_UTIL_output ) {
+    chomp $line;
+  
+    grep(s/ (AM|PM)/$1/g,$line);
+    grep(s/\s+/\|/g,$line);
+
+    my ($time, $cpu, $user, $nice, $system, 
+       $iowait, $steal, $idle
+       ) = split('\|',$line);
+
+    next unless ($time && $cpu && $idle);
+
+    my ($AMPM_current) = $time =~ /(AM|PM)/;
+    if ( $AMPM_current eq 'AM' && $AMPM_previous eq 'PM' ) {
+      $next_day_flag = 1;
+      }
+    $AMPM_previous = $AMPM_current;
+
+    $epoch_date = str2time("${year}-${month}-${day} $time");
+    if ($next_day_flag == 1) { $epoch_date = $epoch_date + 86400; }
+
+    print OUTFILE "sar_cpu_user $epoch_date $user host=$hostname cpu=$cpu\n";
+    print OUTFILE "sar_cpu_nice $epoch_date $nice host=$hostname cpu=$cpu\n";
+    print OUTFILE "sar_cpu_system $epoch_date $system host=$hostname cpu=$cpu\n";
+    print OUTFILE "sar_cpu_iowait $epoch_date $iowait host=$hostname cpu=$cpu\n";
+    print OUTFILE "sar_cpu_steal $epoch_date $steal host=$hostname cpu=$cpu\n";
+    print OUTFILE "sar_cpu_idle $epoch_date $idle host=$hostname cpu=$cpu\n";
+    }
+  
+  $AMPM_previous = 'unset';
+  $next_day_flag = 0;
+  $cmd = "sar --legacy -f $file -d -p | grep -v Average | grep -v x86 | grep -v DEV";
+  #print $cmd;
+  my @sar_BLOCK_DEV_UTIL_output = `$cmd`;
+  foreach my $line ( @sar_BLOCK_DEV_UTIL_output ) {
+    chomp $line;
+
+    grep(s/ (AM|PM)/$1/g,$line);
+    grep(s/\s+/\|/g,$line);
+
+    my ($time, $device, $tps, $rd_sec, $wr_sec,
+       $avgrq_sz, $avgqu_sz, $await, $svctm, $util
+       ) = split('\|',$line);
+
+    next unless ($time && $device && $util);
+
+    my ($AMPM_current) = $time =~ /(AM|PM)/;
+    if ( $AMPM_current eq 'AM' && $AMPM_previous eq 'PM' ) {
+      $next_day_flag = 1;
+      }
+    $AMPM_previous = $AMPM_current;
+
+    $epoch_date = str2time("${year}-${month}-${day} $time");
+    if ($next_day_flag == 1) { $epoch_date = $epoch_date + 86400; }
+
+    print OUTFILE "sar_block_dev_tps $epoch_date $tps host=$hostname device=$device\n";
+    print OUTFILE "sar_block_dev_read_sectors_sec $epoch_date $rd_sec host=$hostname device=$device\n";
+    print OUTFILE "sar_block_dev_write_sectors_sec $epoch_date $wr_sec host=$hostname device=$device\n";
+    print OUTFILE "sar_block_dev_avg_request_size $epoch_date $avgrq_sz host=$hostname device=$device\n";
+    print OUTFILE "sar_block_dev_avg_queue_length $epoch_date $avgqu_sz host=$hostname device=$device\n";
+    print OUTFILE "sar_block_dev_avg_await $epoch_date $await host=$hostname device=$device\n";
+    print OUTFILE "sar_block_dev_avg_service_time $epoch_date $svctm host=$hostname device=$device\n";
+    print OUTFILE "sar_block_dev_utilization $epoch_date $util host=$hostname device=$device\n";
+    }
+
+  $AMPM_previous = 'unset';
+  $next_day_flag = 0;
+  $cmd = "sar --legacy -f $file -q | grep -v Average | grep -v x86 | grep -v ldavg";
+  #print $cmd;
+  my @sar_QUEUE_LOAD_output = `$cmd`;
+  foreach my $line ( @sar_QUEUE_LOAD_output ) {
+    chomp $line;
+
+    grep(s/ (AM|PM)/$1/g,$line);
+    grep(s/\s+/\|/g,$line);
+
+    my ($time, $run_sz, $plist_sz, $ldavg_1,
+       $ldavg_5, $ldavg_15
+       ) = split('\|',$line);
+
+    next unless ($time && $run_sz && $ldavg_15);
+
+    my ($AMPM_current) = $time =~ /(AM|PM)/;
+    if ( $AMPM_current eq 'AM' && $AMPM_previous eq 'PM' ) {
+      $next_day_flag = 1;
+      }
+    $AMPM_previous = $AMPM_current;
+
+    $epoch_date = str2time("${year}-${month}-${day} $time");
+    if ($next_day_flag == 1) { $epoch_date = $epoch_date + 86400; }
+
+    print OUTFILE "sar_process_waiting_list_length $epoch_date $run_sz host=$hostname\n";
+    print OUTFILE "sar_process_list_length $epoch_date $plist_sz host=$hostname\n";
+    print OUTFILE "sar_loadavg_1 $epoch_date $ldavg_1 host=$hostname\n";
+    print OUTFILE "sar_loadavg_5 $epoch_date $ldavg_5 host=$hostname\n";
+    print OUTFILE "sar_loadavg_15 $epoch_date $ldavg_15 host=$hostname\n";
+    }
+
+  $AMPM_previous = 'unset';
+  $next_day_flag = 0;
+  $cmd = "sar --legacy -f $file -w | grep -v Average | grep -v x86 | grep -v cswch";
+  #print $cmd;
+  my @sar_TASKS_SWITCHES_output = `$cmd`;
+  foreach my $line ( @sar_TASKS_SWITCHES_output ) {
+    chomp $line;
+
+    grep(s/ (AM|PM)/$1/g,$line);
+    grep(s/\s+/\|/g,$line);
+
+    my ($time, $procs, $cswchs
+       ) = split('\|',$line);
+
+    next unless ($time && $procs && $cswchs);
+
+    my ($AMPM_current) = $time =~ /(AM|PM)/;
+    if ( $AMPM_current eq 'AM' && $AMPM_previous eq 'PM' ) {
+      $next_day_flag = 1;
+      }
+    $AMPM_previous = $AMPM_current;
+
+    $epoch_date = str2time("${year}-${month}-${day} $time");
+    if ($next_day_flag == 1) { $epoch_date = $epoch_date + 86400; }
+
+    print OUTFILE "sar_process_created_per_second $epoch_date $procs host=$hostname\n";
+    print OUTFILE "sar_context_switches_per_second $epoch_date $cswchs host=$hostname\n";
+    }
+
+  $AMPM_previous = 'unset';
+  $next_day_flag = 0;
+  $cmd = "sar --legacy -f $file -R | grep -v Average | grep -v x86 | grep -v frmpg";
+  #print $cmd;
+  my @sar_MEMORY_ACTIVITY_output = `$cmd`;
+  foreach my $line ( @sar_MEMORY_ACTIVITY_output ) {
+    chomp $line;
+
+    grep(s/ (AM|PM)/$1/g,$line);
+    grep(s/\s+/\|/g,$line);
+
+    my ($time, $frmpg_s, $bufpg_s, $campg_s
+       ) = split('\|',$line);
+
+    next unless ($time && $frmpg_s && $campg_s);
+
+    my ($AMPM_current) = $time =~ /(AM|PM)/;
+    if ( $AMPM_current eq 'AM' && $AMPM_previous eq 'PM' ) {
+      $next_day_flag = 1;
+      }
+    $AMPM_previous = $AMPM_current;
+
+    $epoch_date = str2time("${year}-${month}-${day} $time");
+    if ($next_day_flag == 1) { $epoch_date = $epoch_date + 86400; }
+
+    print OUTFILE "sar_memory_pages_freed_per_second $epoch_date $frmpg_s host=$hostname\n";
+    print OUTFILE "sar_memory_pages_to_buffers_per_second $epoch_date $bufpg_s host=$hostname\n";
+    print OUTFILE "sar_memory_pages_to_cache_per_second $epoch_date $campg_s host=$hostname\n";
+    }
+
+  $AMPM_previous = 'unset';
+  $next_day_flag = 0;
+  $cmd = "sar --legacy -f $file -r | grep -v Average | grep -v x86 | grep -v commit";
+  #print $cmd;
+  my @sar_MEMORY_UTIL_output = `$cmd`;
+  foreach my $line ( @sar_MEMORY_UTIL_output ) {
+    chomp $line;
+
+    grep(s/ (AM|PM)/$1/g,$line);
+    grep(s/\s+/\|/g,$line);
+
+    my ($time, $kbmemfree, $kbmemused, $perc_memused, $kbbuffers,
+        $kbcached, $kbcommit, $perc_commit
+       ) = split('\|',$line);
+
+    next unless ($time && $kbmemfree && $perc_commit);
+
+    my ($AMPM_current) = $time =~ /(AM|PM)/;
+    if ( $AMPM_current eq 'AM' && $AMPM_previous eq 'PM' ) {
+      $next_day_flag = 1;
+      }
+    $AMPM_previous = $AMPM_current;
+
+    $epoch_date = str2time("${year}-${month}-${day} $time");
+    if ($next_day_flag == 1) { $epoch_date = $epoch_date + 86400; }
+
+    print OUTFILE "sar_memory_kbmemfree $epoch_date $kbmemfree host=$hostname\n";
+    print OUTFILE "sar_memory_kbmemused $epoch_date $kbmemused host=$hostname\n";
+    print OUTFILE "sar_memory_perc_memused $epoch_date $perc_memused host=$hostname\n";
+    print OUTFILE "sar_memory_kbbuffers $epoch_date $kbbuffers host=$hostname\n";
+    print OUTFILE "sar_memory_kbcached $epoch_date $kbcached host=$hostname\n";
+    print OUTFILE "sar_memory_kbcommit $epoch_date $kbcommit host=$hostname\n";
+    print OUTFILE "sar_memory_perc_commit $epoch_date $perc_commit host=$hostname\n";
+    }
+
+  $AMPM_previous = 'unset';
+  $next_day_flag = 0;
+  $cmd = "sar --legacy -f $file -v | grep -v Average | grep -v x86 | grep -v file-nr";
+  #print $cmd;
+  my @sar_KERNEL_TABLES_output = `$cmd`;
+  foreach my $line ( @sar_KERNEL_TABLES_output ) {
+    chomp $line;
+
+    grep(s/ (AM|PM)/$1/g,$line);
+    grep(s/\s+/\|/g,$line);
+
+    my ($time, $dentunusd, $file_nr, $inode_nr, $pty_nr
+       ) = split('\|',$line);
+
+    next unless ($time && $dentunusd && $pty_nr);
+
+    my ($AMPM_current) = $time =~ /(AM|PM)/;
+    if ( $AMPM_current eq 'AM' && $AMPM_previous eq 'PM' ) {
+      $next_day_flag = 1;
+      }
+    $AMPM_previous = $AMPM_current;
+
+    $epoch_date = str2time("${year}-${month}-${day} $time");
+    if ($next_day_flag == 1) { $epoch_date = $epoch_date + 86400; }
+
+    print OUTFILE "sar_tables_unused_directory_cache $epoch_date $dentunusd host=$hostname\n";
+    print OUTFILE "sar_tables_file_handles_used $epoch_date $file_nr host=$hostname\n";
+    print OUTFILE "sar_tables_inode_handlers_used $epoch_date $inode_nr host=$hostname\n";
+    print OUTFILE "sar_tables_pseudo_terminals_used $epoch_date $pty_nr host=$hostname\n";
+    }
+
+  }
+
+close(OUTFILE);
+
+
+exit;

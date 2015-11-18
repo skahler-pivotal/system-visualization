@@ -1,0 +1,85 @@
+#!/usr/bin/perl
+
+##########################
+# The program takes the GPDB system_history table
+# and coverts into datapoints to be put into TSDB
+# #######################
+use strict;
+use warnings;
+use Date::Parse;
+use POSIX qw(mkfifo);
+
+my $counter=0;
+my $FIFO = '/tmp/tsdb_system_history_pipe';
+my %active_epoch;
+
+unless (-p $FIFO) {
+  unlink $FIFO; 
+  mkfifo($FIFO, 0700) || die "can't mkfifo $FIFO: $!";
+  }
+
+system("tsdb import $FIFO &");
+sleep 2;
+
+open(OUTFILE, ">", $FIFO);
+
+open(INFILE, "/data1/system_history");
+while ( <INFILE> ) {
+  $counter++;
+  my $line = $_;
+  chomp $line;
+  next if ( $line =~ /(ctime|\+|rows)/ );
+  grep(s/\s+/ /g,$line);
+  grep(s/^ //g,$line);
+  #print $line;
+
+  my ($time, $hostname, $mem_total, $mem_used, $mem_actual_used, 
+     $mem_actual_free, $swap_total, $swap_used, $swap_page_in,
+     $swap_page_out, $cpu_user, $cpu_sys, $cpu_idle, $load0,
+     $load1, $load2, $quantum, $disk_ro_rate, $disk_wo_rate,
+     $disk_rb_rate, $disk_wb_rate, $net_rp_rate, $net_wp_rate,
+     $net_rb_rate, $net_wb_rate) = split(' \| ',$line);
+   
+  #print @vals;
+  my $epoch_date = str2time($time);
+
+  if ( $counter%10000 == 0  || $epoch_date <= $active_epoch{$hostname} ) {
+    close(OUTFILE);
+    sleep 5;
+    system("tsdb import $FIFO &");
+    open(OUTFILE, ">", $FIFO);
+    }
+  $active_epoch{$hostname} = $epoch_date;
+
+  print OUTFILE "mem_total $epoch_date $mem_total host=$hostname\n";
+  print OUTFILE "mem_used $epoch_date $mem_used host=$hostname\n";
+  print OUTFILE "mem_actual_used $epoch_date $mem_actual_used host=$hostname\n";
+  print OUTFILE "mem_actual_free $epoch_date $mem_actual_free host=$hostname\n";
+  print OUTFILE "swap_total $epoch_date $swap_total host=$hostname\n";
+  print OUTFILE "swap_used $epoch_date $swap_used host=$hostname\n";
+  print OUTFILE "swap_page_in $epoch_date $swap_page_in host=$hostname\n";
+  print OUTFILE "swap_page_out $epoch_date $swap_page_out host=$hostname\n";
+  print OUTFILE "cpu_user $epoch_date $cpu_user host=$hostname\n";
+  print OUTFILE "cpu_sys $epoch_date $cpu_sys host=$hostname\n";
+  print OUTFILE "cpu_idle $epoch_date $cpu_idle host=$hostname\n";
+  print OUTFILE "load0 $epoch_date $load0 host=$hostname\n";
+  print OUTFILE "load1 $epoch_date $load1 host=$hostname\n";
+  print OUTFILE "load2 $epoch_date $load2 host=$hostname\n";
+  print OUTFILE "quantum $epoch_date $quantum host=$hostname\n";
+  print OUTFILE "disk_ro_rate $epoch_date $disk_ro_rate host=$hostname\n";
+  print OUTFILE "disk_wo_rate $epoch_date $disk_wo_rate host=$hostname\n";
+  print OUTFILE "disk_rb_rate $epoch_date $disk_rb_rate host=$hostname\n";
+  print OUTFILE "disk_wb_rate $epoch_date $disk_wb_rate host=$hostname\n";
+  print OUTFILE "net_rp_rate $epoch_date $net_rp_rate host=$hostname\n";
+  print OUTFILE "net_wp_rate $epoch_date $net_wp_rate host=$hostname\n";
+  print OUTFILE "net_rb_rate $epoch_date $net_rb_rate host=$hostname\n";
+  print OUTFILE "net_wb_rate $epoch_date $net_wb_rate host=$hostname\n";
+  
+  }
+
+close(INFILE);
+close(OUTFILE);
+
+
+#split -l 1000000 tsdb_system_history.dat
+exit;

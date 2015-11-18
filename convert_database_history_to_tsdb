@@ -1,0 +1,37 @@
+#!/usr/bin/perl
+
+######################
+# converts GPDB database_history table output
+# to somethign that can be visualized in TPSD/Grafana
+# this is most useful in seeing when large numbers of 
+# queries are running and when they are getting queued
+# #####################
+
+use strict;
+use warnings;
+use Date::Parse;
+
+my $counter=0;
+
+open(FILE, "database_history.psv");
+while ( <FILE> ) {
+  $counter++;
+  my $line = $_;
+  chomp $line;
+  grep(s/\s+/ /g,$line);
+  grep(s/^ //g,$line);
+  #print $line;
+
+  my (
+     $time, $queries_total, $queries_running, $queries_queued 
+     ) = split('\|',$line);
+   
+  #print @vals;
+  my $epoch_date = str2time($time);
+  print "queries_total $epoch_date $queries_total cluster=fpl\n";
+  print "queries_running $epoch_date $queries_running cluster=fpl\n";
+  print "queries_queued $epoch_date $queries_queued cluster=fpl\n";
+
+  }
+close(FILE);
+exit;

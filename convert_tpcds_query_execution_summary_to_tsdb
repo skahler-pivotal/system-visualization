@@ -1,0 +1,57 @@
+#!/usr/bin/perl
+
+###########################
+# This scripts takes the tpcds execution summary
+# and inputs it as a timeseries in opentsdb
+# the goal is to create a visualization that allows you to
+# see query activity and how it correlates with system activity
+# #########################
+use strict;
+use warnings;
+use POSIX qw(mkfifo);
+
+my $FIFO = '/tmp/tpcds_tsdb_pipe';
+open(FILE, "execution_summary_08_29_08_02_29.dat");
+
+my @data_points;
+
+while ( <FILE> ) {
+  my $line = $_;
+  chomp $line;
+
+  next if ( $line =~ /Query/ );
+  my (
+     $type, $id, $run_id, $start_time, $start_epoch, $end_time,
+     $end_epoch, $num_rows, $helper, $runtime, $launch_flag, $complete_flag,
+     $success_flag, $run_name, $run_nickname
+     ) = split("\t",$line);
+  my ($query_id_num) = $id =~ /query\_(\d+)\.sql/;
+  my $start_epoch_rounded = int($start_epoch);
+  my $end_epoch_rounded = int($end_epoch);
+
+  push @data_points, { epoch => $start_epoch_rounded,
+                       query_id => $query_id_num,
+                       action => "start",
+                       run => $run_name };
+  push @data_points, { epoch => $end_epoch_rounded,
+                       query_id => $query_id_num,
+                       action => "end",
+                       run => $run_name };
+  }
+close(FILE);
+
+unless (-p $FIFO) {
+  unlink $FIFO;
+  mkfifo($FIFO, 0700) || die "can't mkfifo $FIFO: $!";
+  }
+system("tsdb import $FIFO &");
+sleep 2;
+open(OUTFILE, ">", $FIFO);
+
+foreach my $data_point ( sort { ${$a}{'epoch'} <=> ${$b}{'epoch'} }  @data_points ) {
+  print "tpcds ${$data_point}{'epoch'} ${$data_point}{'query_id'} action=${$data_point}{'action'} run=${$data_point}{'run'}\n";
+  print OUTFILE "tpcds ${$data_point}{'epoch'} ${$data_point}{'query_id'} action=${$data_point}{'action'} run=${$data_point}{'run'}\n";
+  }
+
+close(OUTFILE);
+exit;
